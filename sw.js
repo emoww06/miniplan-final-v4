@@ -1,4 +1,4 @@
-const CACHE_NAME = 'miniplan-v2.1.0';
+const CACHE_NAME = 'miniplan-v2.2.0';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -7,6 +7,7 @@ const urlsToCache = [
   '/favicon.ico',
   '/favicon.png',
   '/icons/icon-192x192.png',
+  '/icons/icon-512x512.png',
   '/sw.js'
 ];
 
@@ -49,7 +50,7 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Cache'den yanıt verme
+// Cache'den yanıt verme - Offline desteği
 self.addEventListener('fetch', event => {
   event.respondWith(
     caches.match(event.request)
@@ -59,13 +60,32 @@ self.addEventListener('fetch', event => {
           return response;
         }
         console.log('Network\'ten yanıt:', event.request.url);
-        return fetch(event.request);
-      })
-      .catch(() => {
-        console.log('Offline mod:', event.request.url);
-        if (event.request.destination === 'document') {
-          return caches.match('/index.html');
-        }
+        return fetch(event.request)
+          .then(response => {
+            // Başarılı yanıtları cache'e ekle
+            if (response && response.status === 200 && response.type === 'basic') {
+              const responseToCache = response.clone();
+              caches.open(CACHE_NAME)
+                .then(cache => {
+                  cache.put(event.request, responseToCache);
+                });
+            }
+            return response;
+          })
+          .catch(() => {
+            console.log('Offline mod:', event.request.url);
+            if (event.request.destination === 'document') {
+              return caches.match('/index.html');
+            }
+            // Offline sayfası göster
+            return new Response('Offline mod - İnternet bağlantınızı kontrol edin', {
+              status: 503,
+              statusText: 'Service Unavailable',
+              headers: new Headers({
+                'Content-Type': 'text/plain',
+              })
+            });
+          });
       })
   );
 });
@@ -78,6 +98,14 @@ self.addEventListener('sync', event => {
   }
 });
 
+// Periodic background sync
+self.addEventListener('periodicsync', event => {
+  console.log('Periodic sync tetiklendi:', event.tag);
+  if (event.tag === 'content-sync') {
+    event.waitUntil(doPeriodicSync());
+  }
+});
+
 // Background sync işlevi
 function doBackgroundSync() {
   return new Promise((resolve) => {
@@ -87,6 +115,26 @@ function doBackgroundSync() {
       console.log('Background sync tamamlandı');
       resolve();
     }, 1000);
+  });
+}
+
+// Periodic sync işlevi
+function doPeriodicSync() {
+  return new Promise((resolve) => {
+    console.log('Periodic sync çalışıyor...');
+    // Uygulama güncellemelerini kontrol et
+    caches.open(CACHE_NAME)
+      .then(cache => {
+        return cache.addAll(urlsToCache);
+      })
+      .then(() => {
+        console.log('Periodic sync tamamlandı - Cache güncellendi');
+        resolve();
+      })
+      .catch(error => {
+        console.error('Periodic sync hatası:', error);
+        resolve();
+      });
   });
 }
 
@@ -131,10 +179,11 @@ self.addEventListener('notificationclick', event => {
   }
 });
 
-// Periodic background sync (deneysel)
-self.addEventListener('periodicsync', event => {
-  console.log('Periodic sync:', event.tag);
-  if (event.tag === 'content-sync') {
-    event.waitUntil(doBackgroundSync());
+// Message handling
+self.addEventListener('message', event => {
+  console.log('Service Worker mesajı alındı:', event.data);
+  
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
   }
 }); 
